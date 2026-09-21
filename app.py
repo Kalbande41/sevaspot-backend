@@ -6,7 +6,9 @@ from supabase import create_client, Client
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
-CORS(app)
+
+# 🟢 CORS ची सर्व बंधने काढून सर्व ब्राऊझर्सना मोकळी परवानगी देणे (याने 'Failed to fetch' मिटेल)
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
 # Render.com च्या Environment Variables मधून keys घेणे
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -23,20 +25,29 @@ else:
     except Exception as err:
         print(f"❌ Supabase जोडताना त्रुटी आली: {err}", file=sys.stderr)
 
-# १. Test / Health Check API
+
+# ========================================================
+# १. Health Check API (सर्व्हर चालू आहे का हे तपासण्यासाठी)
+# ========================================================
 @app.route('/', methods=['GET'])
 def home():
     status = "Connected" if supabase is not None else "Missing Configuration"
     return jsonify({
         "status": "online",
-        "service": "SevaSpot Python Backend",
+        "service": "QuickIDPrint Python Backend",
         "supabase": status,
-        "message": "SevaSpot Python Backend is Running Perfectly on Render!"
+        "message": "Backend is Running Perfectly on Render!"
     }), 200
 
-# २. Plan chi Validity Check karn्याची API
-@app.route('/check-validity', methods=['POST'])
+
+# ========================================================
+# २. Plan ची Validity Check करण्याची API
+# ========================================================
+@app.route('/check-validity', methods=['POST', 'OPTIONS'])
 def check_validity():
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "ok"}), 200
+
     if not supabase:
         return jsonify({"error": "Supabase कनेक्ट नाही. Environment variables तपासा."}), 500
 
@@ -81,9 +92,15 @@ def check_validity():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ३. Admin API: Plan recharge approve करणे
-@app.route('/approve-recharge', methods=['POST'])
+
+# ========================================================
+# ३. Admin API: Plan recharge approve करणे (From & To Date सह)
+# ========================================================
+@app.route('/approve-recharge', methods=['POST', 'OPTIONS'])
 def approve_recharge():
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "ok"}), 200
+
     if not supabase:
         return jsonify({"error": "Supabase कनेक्ट नाही."}), 500
 
@@ -98,10 +115,15 @@ def approve_recharge():
     try:
         supabase.table('recharge_requests').update({'status': 'Approved'}).eq('id', request_id).execute()
 
-        new_expiry_date = datetime.now().date() + timedelta(days=plan_days)
+        today_date = datetime.now().date()
+        new_expiry_date = today_date + timedelta(days=plan_days)
+
+        # 🟢 From Date (start_date) आणि To Date (expire_date) दोन्ही अचूक अपडेट करणे
         supabase.table('user_profiles').update({
             'plan_status': 'Active',
-            'expire_date': new_expiry_date.strftime('%Y-%m-%d')
+            'start_date': today_date.strftime('%Y-%m-%d'),      # रिचार्ज झाल्याचा दिवस
+            'expire_date': new_expiry_date.strftime('%Y-%m-%d'), # एक्सपायरी दिवस
+            'last_recharge_date': datetime.now().isoformat()
         }).eq('id', user_id).execute()
 
         supabase.table('transactions').insert({
@@ -115,10 +137,20 @@ def approve_recharge():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-        # app.py मध्ये हा API रूट जोडा:
 
-@app.route('/reset-password', methods=['POST'])
+
+# ========================================================
+# ४. थेट पासवर्ड रीसेट API (Mobile + Email)
+# ========================================================
+@app.route('/reset-password', methods=['POST', 'OPTIONS'])
 def reset_password():
+    # Preflight Request पास करणे
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "ok"}), 200
+
+    if not supabase:
+        return jsonify({"status": "error", "message": "Supabase सर्व्हर कनेक्ट नाही."}), 500
+
     data = request.get_json(silent=True) or request.form or {}
     user_id = data.get('userId')
     email = data.get('email', '').strip().lower()
@@ -138,7 +170,7 @@ def reset_password():
         }), 400
 
     try:
-        # १. सुरक्षेसाठी खात्री करणे की मोबाईल व ईमेल जुळतात
+        # १. सुरक्षेसाठी मोबाईल व ईमेल डेटाबेसमध्ये पडताळणे
         profile_res = supabase.table('user_profiles')\
             .select('id, email, mobile_number')\
             .eq('id', user_id)\
@@ -152,10 +184,10 @@ def reset_password():
                 "message": "सुरक्षा तपासणी अयशस्वी! मोबाईल नंबर व ईमेल जुळत नाहीत."
             }), 403
 
-        # २. Supabase Auth मध्ये युजरचा पासवर्ड ॲडमिन अधिकाराने (service_role) अपडेट करणे
+        # २. Supabase Auth मध्ये युझरचा पासवर्ड ॲडमिन (service_role) अधिकाराने बदलणे
         supabase.auth.admin.update_user_by_id(
-            user_id,
-            {"password": new_password}
+            uid=user_id,
+            attributes={"password": new_password}
         )
 
         return jsonify({
@@ -164,12 +196,16 @@ def reset_password():
         }), 200
 
     except Exception as e:
-        print(f"Password Reset Error: {e}")
+        print(f"Password Reset Error: {e}", file=sys.stderr)
         return jsonify({
             "status": "error",
             "message": f"सर्व्हर त्रुटी: {str(e)}"
         }), 500
 
+
+# ========================================================
+# सर्व्हर सुरू करणे
+# ========================================================
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
