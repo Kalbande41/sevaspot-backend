@@ -115,6 +115,60 @@ def approve_recharge():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+        # app.py मध्ये हा API रूट जोडा:
+
+@app.route('/reset-password', methods=['POST'])
+def reset_password():
+    data = request.get_json(silent=True) or request.form or {}
+    user_id = data.get('userId')
+    email = data.get('email', '').strip().lower()
+    mobile = data.get('mobile', '').strip()
+    new_password = data.get('newPassword', '').strip()
+
+    if not user_id or not email or not mobile or not new_password:
+        return jsonify({
+            "status": "error",
+            "message": "सर्व माहिती (मोबाईल, ईमेल, नवीन पासवर्ड) आवश्यक आहे."
+        }), 400
+
+    if len(new_password) < 6:
+        return jsonify({
+            "status": "error",
+            "message": "पासवर्ड किमान ६ अक्षरांचा असावा."
+        }), 400
+
+    try:
+        # १. सुरक्षेसाठी खात्री करणे की मोबाईल व ईमेल जुळतात
+        profile_res = supabase.table('user_profiles')\
+            .select('id, email, mobile_number')\
+            .eq('id', user_id)\
+            .eq('mobile_number', mobile)\
+            .eq('email', email)\
+            .execute()
+
+        if not profile_res.data or len(profile_res.data) == 0:
+            return jsonify({
+                "status": "error",
+                "message": "सुरक्षा तपासणी अयशस्वी! मोबाईल नंबर व ईमेल जुळत नाहीत."
+            }), 403
+
+        # २. Supabase Auth मध्ये युजरचा पासवर्ड ॲडमिन अधिकाराने (service_role) अपडेट करणे
+        supabase.auth.admin.update_user_by_id(
+            user_id,
+            {"password": new_password}
+        )
+
+        return jsonify({
+            "status": "success",
+            "message": "पासवर्ड यशस्वीरीत्या अपडेट करण्यात आला आहे!"
+        }), 200
+
+    except Exception as e:
+        print(f"Password Reset Error: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"सर्व्हर त्रुटी: {str(e)}"
+        }), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
