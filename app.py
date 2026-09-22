@@ -94,7 +94,7 @@ def check_validity():
 
 
 # ========================================================
-# ३. Admin API: Plan recharge approve करणे (From & To Date सह)
+# ३. Admin API: Plan recharge approve करणे (जुने दिवस + नवीन दिवस)
 # ========================================================
 @app.route('/approve-recharge', methods=['POST', 'OPTIONS'])
 def approve_recharge():
@@ -113,23 +113,48 @@ def approve_recharge():
         return jsonify({"error": "requestId आणि userId आवश्यक आहेत."}), 400
 
     try:
-        supabase.table('recharge_requests').update({'status': 'Approved'}).eq('id', request_id).execute()
-
+        # १. युजरचा आधीचा डेटा आणि उरलेले दिवस तपासणे
+        prof_res = supabase.table('user_profiles').select('expire_date, plan_status, total_renews').eq('id', user_id).execute()
+        
         today_date = datetime.now().date()
-        new_expiry_date = today_date + timedelta(days=plan_days)
+        start_date = today_date
 
-        # 🟢 From Date (start_date) आणि To Date (expire_date) दोन्ही अचूक अपडेट करणे
+        if prof_res.data:
+            profile = prof_res.data[0]
+            current_exp_str = profile.get('expire_date')
+            status = profile.get('plan_status')
+            
+            # जर प्लॅन ॲक्टिव्ह असेल, तर जुन्या शिल्लक दिवसांच्या पुढे नवीन दिवस जोडणे
+            if status == 'Active' and current_exp_str:
+                current_exp = datetime.strptime(current_exp_str, '%Y-%m-%d').date()
+                if current_exp >= today_date:
+                    start_date = current_exp  
+
+        new_expiry_date = start_date + timedelta(days=plan_days)
+        start_date_str = today_date.strftime('%Y-%m-%d') # प्लॅन आजपासूनच सुरू झालाय असे दाखवण्यासाठी
+        expiry_date_str = new_expiry_date.strftime('%Y-%m-%d')
+
+        # २. प्रोफाईल अपडेट करणे
+        current_renews = prof_res.data[0].get('total_renews') if prof_res.data and prof_res.data[0].get('total_renews') else 0
+        
         supabase.table('user_profiles').update({
             'plan_status': 'Active',
-            'start_date': today_date.strftime('%Y-%m-%d'),      # रिचार्ज झाल्याचा दिवस
-            'expire_date': new_expiry_date.strftime('%Y-%m-%d'), # एक्सपायरी दिवस
+            'start_date': start_date_str,
+            'expire_date': expiry_date_str,
+            'total_renews': current_renews + 1,
             'last_recharge_date': datetime.now().isoformat()
         }).eq('id', user_id).execute()
 
+        # ३. रिक्वेस्ट 'Approved' करणे
+        supabase.table('recharge_requests').update({'status': 'Approved'}).eq('id', request_id).execute()
+
+        # ४. ट्रॅन्झॅक्शन टेबलमध्ये अचूक नोंदी (तारीख आणि एक्सपायरीसह)
         supabase.table('transactions').insert({
             'user_id': user_id,
-            'action': 'Recharge Approved',
+            'action': 'Plan Renew',
             'remark': f'{plan_days} Days Plan Activated',
+            'start_date': start_date_str,
+            'expiry_date': expiry_date_str,
             'status': 'Success'
         }).execute()
 
@@ -144,7 +169,6 @@ def approve_recharge():
 # ========================================================
 @app.route('/reset-password', methods=['POST', 'OPTIONS'])
 def reset_password():
-    # Preflight Request पास करणे
     if request.method == 'OPTIONS':
         return jsonify({"status": "ok"}), 200
 
@@ -170,7 +194,6 @@ def reset_password():
         }), 400
 
     try:
-        # १. सुरक्षेसाठी मोबाईल व ईमेल डेटाबेसमध्ये पडताळणे
         profile_res = supabase.table('user_profiles')\
             .select('id, email, mobile_number')\
             .eq('id', user_id)\
@@ -184,7 +207,6 @@ def reset_password():
                 "message": "सुरक्षा तपासणी अयशस्वी! मोबाईल नंबर व ईमेल जुळत नाहीत."
             }), 403
 
-        # २. Supabase Auth मध्ये युझरचा पासवर्ड ॲडमिन (service_role) अधिकाराने बदलणे
         supabase.auth.admin.update_user_by_id(
             uid=user_id,
             attributes={"password": new_password}
@@ -201,6 +223,38 @@ def reset_password():
             "status": "error",
             "message": f"सर्व्हर त्रुटी: {str(e)}"
         }), 500
+
+
+# ========================================================
+# ५. Service Log API (प्रिंट हिस्ट्री सेव्ह करण्यासाठी)
+# ========================================================
+@app.route('/log-service', methods=['POST', 'OPTIONS'])
+def log_service():
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "ok"}), 200
+
+    if not supabase:
+        return jsonify({"error": "Supabase कनेक्ट नाही."}), 500
+
+    data = request.get_json(silent=True) or {}
+    user_id = data.get('userId')
+    category = data.get('serviceCategory') 
+    details = data.get('serviceDetails')   
+
+    if not user_id or not category:
+        return jsonify({"error": "userId आणि serviceCategory आवश्यक आहेत."}), 400
+
+    try:
+        supabase.table('service_logs').insert({
+            'user_id': user_id,
+            'service_category': category,
+            'service_details': details
+        }).execute()
+
+        return jsonify({"success": True, "message": "सर्व्हिस लॉग यशस्वीरीत्या सेव्ह झाला!"}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ========================================================
