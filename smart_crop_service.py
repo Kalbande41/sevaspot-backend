@@ -21,20 +21,25 @@ def process_card():
         user_id = request.form.get('userId')
         password = request.form.get('password', '')
         size = request.form.get('size', '4x6')
-        brightness = int(request.form.get('brightness', 110))
+        
+        # 4 Editing parameters
+        brightness = int(request.form.get('brightness', 100))
+        contrast = int(request.form.get('contrast', 100))
+        saturation = int(request.form.get('saturation', 100))
+        grayscale = int(request.form.get('grayscale', 0))
+        
         card_name = request.form.get('cardName', 'Aadhaar') 
 
         file = request.files.get('pdfFile')
         if not file:
-            return jsonify({"error": "PDF फाईल सापडली नाही."}), 400
+            return jsonify({"error": "PDF phail sapadli nahi."}), 400
 
         if not supabase:
-            return jsonify({"error": "डेटाबेस कनेक्शन नाही."}), 500
+            return jsonify({"error": "Database connection nahi."}), 500
 
-        # डेटाबेसमधून टेम्पलेट आणणे
         template_res = supabase.table('card_templates').select('*').eq('card_name', card_name).execute()
         if not template_res.data:
-            return jsonify({"error": f"{card_name} चे टेम्पलेट डेटाबेसमध्ये सापडले नाही!"}), 404
+            return jsonify({"error": f"{card_name} che template database madhe sapadle nahi!"}), 404
         
         t = template_res.data[0]
 
@@ -43,7 +48,7 @@ def process_card():
         
         if doc.is_encrypted:
             if not doc.authenticate(password):
-                return jsonify({"error": f"चुकीचा पासवर्ड! {card_name} चा अचूक पासवर्ड टाका."}), 400
+                return jsonify({"error": f"Chukicha password! {card_name} cha achuk password taka."}), 400
 
         page = doc[0]
         zoom = 4.0 
@@ -62,24 +67,27 @@ def process_card():
         front_img = img.crop((sLeftX, sy, sLeftX + sw, sy + sh))
         back_img = img.crop((sRightX, sy, sRightX + sw, sy + sh))
 
-        # फोटो ब्राइटनेस आणि शार्पनेस
+        # 🟢 Photo Editing (Brightness, Contrast, Saturation, Grayscale) fakt photo var apply hovil
+        photo_x = int(sw * float(t['photo_x_pct']))
+        photo_y = int(sh * float(t['photo_y_pct']))
+        photo_w = int(sw * float(t['photo_w_pct']))
+        photo_h = int(sh * float(t['photo_h_pct']))
+        
+        photo_img = front_img.crop((photo_x, photo_y, photo_x + photo_w, photo_y + photo_h))
+        
         if brightness != 100:
-            photo_x = int(sw * float(t['photo_x_pct']))
-            photo_y = int(sh * float(t['photo_y_pct']))
-            photo_w = int(sw * float(t['photo_w_pct']))
-            photo_h = int(sh * float(t['photo_h_pct']))
+            photo_img = ImageEnhance.Brightness(photo_img).enhance(brightness / 100.0)
+        if contrast != 100:
+            photo_img = ImageEnhance.Contrast(photo_img).enhance(contrast / 100.0)
+        if saturation != 100:
+            photo_img = ImageEnhance.Color(photo_img).enhance(saturation / 100.0)
+        if grayscale > 0:
+            gray_img = photo_img.convert("L").convert("RGB")
+            photo_img = Image.blend(photo_img, gray_img, grayscale / 100.0)
             
-            photo_img = front_img.crop((photo_x, photo_y, photo_x + photo_w, photo_y + photo_h))
-            
-            enhancer = ImageEnhance.Brightness(photo_img)
-            photo_img = enhancer.enhance(brightness / 100.0)
-            
-            sharpness = ImageEnhance.Sharpness(photo_img)
-            photo_img = sharpness.enhance(1.5)
-            
-            front_img.paste(photo_img, (photo_x, photo_y))
+        front_img.paste(photo_img, (photo_x, photo_y))
 
-        # 🟢 राऊंडेड कॉर्नर्स आणि कडांना काळी बॉर्डर (Black Border for Cutting) जोडणे
+        # Rounded Corners and Black Border for cutting
         def add_rounded_corners_and_border(im, rad):
             im = im.convert("RGBA")
             circle = Image.new('L', (rad * 2, rad * 2), 0)
@@ -94,14 +102,11 @@ def process_card():
             alpha.paste(circle.crop((rad, rad, rad * 2, rad * 2)), (w - rad, h - rad))
             im.putalpha(alpha)
             
-            # काळी बॉर्डर काढण्यासाठी
             bordered = Image.new("RGBA", im.size, (255, 255, 255, 0))
             bordered.paste(im, (0, 0), im)
             
-            # कॉर्नरभोवती काळी बॉर्डर ड्रॉ करणे
             draw_border = ImageDraw.Draw(bordered)
             draw_border.rounded_rectangle([0, 0, w-1, h-1], radius=rad, outline="black", width=6)
-            
             return bordered.convert("RGB")
 
         front_img = add_rounded_corners_and_border(front_img, 32)
