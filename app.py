@@ -47,7 +47,7 @@ def home():
 
 
 # ========================================================
-# २. Plan Validity Check API (Fixed for Last Day Access)
+# २. Plan ची Validity Check करण्याची API (सुधारित आणि अचूक लॉजिक)
 # ========================================================
 @app.route('/check-validity', methods=['POST', 'OPTIONS'])
 def check_validity():
@@ -70,6 +70,8 @@ def check_validity():
             return jsonify({"error": "User ची माहिती मिळाली नाही."}), 404
 
         user_profile = response.data[0]
+        
+        # आजची तारीख (System Date)
         today = datetime.now().date()
 
         expire_date_str = user_profile.get('expire_date')
@@ -80,29 +82,29 @@ def check_validity():
 
         expire_date = datetime.strptime(expire_date_str, '%Y-%m-%d').date()
 
-        # 🟢 FIX: एक्सपायरीच्या दिवशी पूर्ण दिवस (23:59 पर्यंत) ॲक्सिस राहण्यासाठी 'today > expire_date' अशी अचूक अट ठेवली आहे. 
-        # (पूर्वी आजचा दिवस आणि एक्सपायरी सारखी असली तरी काही वेळेस ब्लॉक होत होते, ते आता सुधारले आहे).
-        if plan_status != 'Active' or today > expire_date:
-            # जर खरोखरच तारीख निघून गेली असेल तरच Expired करा
+        # 🟢 पक्के आणि सुरक्षित लॉजिक:
+        # जर प्लॅनचा स्टेटस 'Active' असेल आणि आजची तारीख एक्सपायरी डेटच्या पुढे (Strictly Greater) गेलेली नसेल, 
+        # तर युजरचा प्लॅन पूर्णपणे वैध आहे. (एका दिवसाचा उरलेला दिवस किंवा महिनाभर असला तरी हा कोड कधीही अडवणार नाही).
+        if plan_status == 'Active' and today <= expire_date:
+            return jsonify({
+                "success": True, 
+                "message": "Plan active आहे.", 
+                "is_active": True, 
+                "expire_date": expire_date_str
+            }), 200
+        else:
+            # जर खरोखरच तारीख संपली असेल तरच Expired स्टेट्स अपडेट करणे
             if today > expire_date and plan_status == 'Active':
                 supabase.table('user_profiles').update({'plan_status': 'Expired'}).eq('id', user_id).execute()
-            
+
             return jsonify({
                 "success": False, 
                 "error": "तुमचा प्लॅन संपला आहे. कृपया रिचार्ज करा.", 
                 "is_active": False
             }), 403
 
-        return jsonify({
-            "success": True, 
-            "message": "Plan active आहे.", 
-            "is_active": True, 
-            "expire_date": expire_date_str
-        }), 200
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 # ========================================================
 # ३. Admin API: Plan recharge approve (From & To Date)
