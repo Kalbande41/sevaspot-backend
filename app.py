@@ -47,7 +47,7 @@ def home():
 
 
 # ========================================================
-# २. Plan ची Validity Check करण्याची API (सुधारित आणि अचूक लॉजिक)
+# २. Plan Validity Check API (Fixed & Robust Logic)
 # ========================================================
 @app.route('/check-validity', methods=['POST', 'OPTIONS'])
 def check_validity():
@@ -55,56 +55,55 @@ def check_validity():
         return jsonify({"status": "ok"}), 200
 
     if not supabase:
-        return jsonify({"error": "Supabase कनेक्ट नाही. Environment variables तपासा."}), 500
+        return jsonify({"error": "Supabase connect nahi. Environment variables tapasa."}), 500
 
     data = request.get_json(silent=True) or {}
     user_id = data.get('userId')
     
     if not user_id:
-        return jsonify({"error": "User ID आवश्यक आहे."}), 400
+        return jsonify({"error": "User ID avashyak ahe."}), 400
 
     try:
         response = supabase.table('user_profiles').select('plan_status, expire_date').eq('id', user_id).execute()
         
         if not response.data:
-            return jsonify({"error": "User ची माहिती मिळाली नाही."}), 404
+            return jsonify({"error": "User chi mahiti milali nahi."}), 404
 
         user_profile = response.data[0]
-        
-        # आजची तारीख (System Date)
         today = datetime.now().date()
 
         expire_date_str = user_profile.get('expire_date')
-        plan_status = user_profile.get('plan_status')
+        plan_status = user_profile.get('plan_status', '')
 
         if not expire_date_str:
-            return jsonify({"success": False, "error": "Plan ची मुदत सेट केली नाही.", "is_active": False}), 403
+            return jsonify({"success": False, "error": "Plan chi mudat set keli nahi.", "is_active": False}), 403
 
         expire_date = datetime.strptime(expire_date_str, '%Y-%m-%d').date()
 
-        # 🟢 पक्के आणि सुरक्षित लॉजिक:
-        # जर प्लॅनचा स्टेटस 'Active' असेल आणि आजची तारीख एक्सपायरी डेटच्या पुढे (Strictly Greater) गेलेली नसेल, 
-        # तर युजरचा प्लॅन पूर्णपणे वैध आहे. (एका दिवसाचा उरलेला दिवस किंवा महिनाभर असला तरी हा कोड कधीही अडवणार नाही).
-        if plan_status == 'Active' and today <= expire_date:
+        # Case-insensitive status check
+        is_active_status = plan_status and str(plan_status).strip().lower() == 'active'
+
+        # 🟢 Robust Fix: Check if status is active and today is less than or equal to expire_date
+        if is_active_status and today <= expire_date:
             return jsonify({
                 "success": True, 
-                "message": "Plan active आहे.", 
+                "message": "Plan active ahe.", 
                 "is_active": True, 
                 "expire_date": expire_date_str
             }), 200
         else:
-            # जर खरोखरच तारीख संपली असेल तरच Expired स्टेट्स अपडेट करणे
-            if today > expire_date and plan_status == 'Active':
+            if today > expire_date and is_active_status:
                 supabase.table('user_profiles').update({'plan_status': 'Expired'}).eq('id', user_id).execute()
 
             return jsonify({
                 "success": False, 
-                "error": "तुमचा प्लॅन संपला आहे. कृपया रिचार्ज करा.", 
+                "error": "Tumcha plan sampla ahe. Krupaya recharge kara.", 
                 "is_active": False
             }), 403
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 # ========================================================
 # ३. Admin API: Plan recharge approve (From & To Date)
@@ -115,7 +114,7 @@ def approve_recharge():
         return jsonify({"status": "ok"}), 200
 
     if not supabase:
-        return jsonify({"error": "Supabase कनेक्ट नाही."}), 500
+        return jsonify({"error": "Supabase connect nahi."}), 500
 
     data = request.get_json(silent=True) or {}
     request_id = data.get('requestId')
@@ -123,7 +122,7 @@ def approve_recharge():
     plan_days = int(data.get('planDays', 30))
 
     if not request_id or not user_id:
-        return jsonify({"error": "requestId आणि userId आवश्यक आहेत."}), 400
+        return jsonify({"error": "requestId ani userId avashyak ahet."}), 400
 
     try:
         prof_res = supabase.table('user_profiles').select('expire_date, plan_status, total_renews').eq('id', user_id).execute()
@@ -134,9 +133,9 @@ def approve_recharge():
         if prof_res.data:
             profile = prof_res.data[0]
             current_exp_str = profile.get('expire_date')
-            status = profile.get('plan_status')
+            status = profile.get('plan_status', '')
             
-            if status == 'Active' and current_exp_str:
+            if status and str(status).strip().lower() == 'active' and current_exp_str:
                 current_exp = datetime.strptime(current_exp_str, '%Y-%m-%d').date()
                 if current_exp >= today_date:
                     start_date = current_exp  
@@ -166,7 +165,7 @@ def approve_recharge():
             'status': 'Success'
         }).execute()
 
-        return jsonify({"success": True, "message": "Plan यशस्वीरीत्या activate झाला!"}), 200
+        return jsonify({"success": True, "message": "Plan yashasviritya activate jhala!"}), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -181,7 +180,7 @@ def reset_password():
         return jsonify({"status": "ok"}), 200
 
     if not supabase:
-        return jsonify({"status": "error", "message": "Supabase सर्व्हर कनेक्ट नाही."}), 500
+        return jsonify({"status": "error", "message": "Supabase server connect nahi."}), 500
 
     data = request.get_json(silent=True) or request.form or {}
     user_id = data.get('userId')
@@ -192,13 +191,13 @@ def reset_password():
     if not user_id or not email or not mobile or not new_password:
         return jsonify({
             "status": "error",
-            "message": "सर्व माहिती (मोबाईल, ईमेल, नवीन पासवर्ड) आवश्यक आहे."
+            "message": "Sarva mahiti (mobile, email, navin password) avashyak ahe."
         }), 400
 
     if len(new_password) < 6:
         return jsonify({
             "status": "error",
-            "message": "पासवर्ड किमान ६ अक्षरांचा असावा."
+            "message": "Password kiman 6 aksharancha asava."
         }), 400
 
     try:
@@ -212,7 +211,7 @@ def reset_password():
         if not profile_res.data or len(profile_res.data) == 0:
             return jsonify({
                 "status": "error",
-                "message": "सुरक्षा तपासणी अयशस्वी! मोबाईल नंबर व ईमेल जुळत नाहीत."
+                "message": "Suraksha tapasani ayashasvi! Mobile number va email julat nahit."
             }), 403
 
         supabase.auth.admin.update_user_by_id(
@@ -222,14 +221,14 @@ def reset_password():
 
         return jsonify({
             "status": "success",
-            "message": "पासवर्ड यशस्वीरीत्या अपडेट करण्यात आला आहे!"
+            "message": "Password yashasviritya update karnyat ala ahe!"
         }), 200
 
     except Exception as e:
         print(f"Password Reset Error: {e}", file=sys.stderr)
         return jsonify({
             "status": "error",
-            "message": f"सर्व्हर त्रुटी: {str(e)}"
+            "message": f"Server truti: {str(e)}"
         }), 500
 
 
@@ -242,7 +241,7 @@ def log_service():
         return jsonify({"status": "ok"}), 200
 
     if not supabase:
-        return jsonify({"error": "Supabase कनेक्ट नाही."}), 500
+        return jsonify({"error": "Supabase connect nahi."}), 500
 
     data = request.get_json(silent=True) or {}
     user_id = data.get('userId')
@@ -250,7 +249,7 @@ def log_service():
     details = data.get('serviceDetails')   
 
     if not user_id or not category:
-        return jsonify({"error": "userId आणि serviceCategory आवश्यक आहेत."}), 400
+        return jsonify({"error": "userId ani serviceCategory avashyak ahet."}), 400
 
     try:
         supabase.table('service_logs').insert({
@@ -259,7 +258,7 @@ def log_service():
             'service_details': details
         }).execute()
 
-        return jsonify({"success": True, "message": "सर्व्हिस लॉग यशस्वीरीत्या सेव्ह झाला!"}), 200
+        return jsonify({"success": True, "message": "Service log yashasviritya save jhala!"}), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
