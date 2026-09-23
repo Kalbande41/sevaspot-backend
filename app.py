@@ -5,6 +5,9 @@ from flask_cors import CORS
 from supabase import create_client, Client
 from datetime import datetime, timedelta
 
+# 🟢 डायनॅमिक स्मार्ट क्रॉप सर्व्हिस (Blueprint) इम्पोर्ट करणे
+from smart_crop_service import smart_crop_bp
+
 app = Flask(__name__)
 
 # 🟢 CORS ची सर्व बंधने काढून सर्व ब्राऊझर्सना मोकळी परवानगी देणे (याने 'Failed to fetch' मिटेल)
@@ -24,6 +27,9 @@ else:
         print("✅ Supabase क्लायंट यशस्वीरीत्या कनेक्ट झाला!")
     except Exception as err:
         print(f"❌ Supabase जोडताना त्रुटी आली: {err}", file=sys.stderr)
+
+# 🟢 स्मार्ट क्रॉप सर्व्हिस (युनिव्हर्सल कार्ड क्रॉपिंग) चा सेपरेट कोड इथे लिंक केला आहे
+app.register_blueprint(smart_crop_bp, url_prefix='/api/services')
 
 
 # ========================================================
