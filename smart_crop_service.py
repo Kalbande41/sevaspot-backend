@@ -22,7 +22,7 @@ def process_card():
         password = request.form.get('password', '')
         size = request.form.get('size', '4x6')
         
-        # 4 Editing parameters
+        # 4 Editing parameters (Client-side live preview sathi values ghene)
         brightness = int(request.form.get('brightness', 100))
         contrast = int(request.form.get('contrast', 100))
         saturation = int(request.form.get('saturation', 100))
@@ -37,6 +37,7 @@ def process_card():
         if not supabase:
             return jsonify({"error": "Database connection nahi."}), 500
 
+        # Database madhun card che template (coordinates) ghene
         template_res = supabase.table('card_templates').select('*').eq('card_name', card_name).execute()
         if not template_res.data:
             return jsonify({"error": f"{card_name} che template database madhe sapadle nahi!"}), 404
@@ -67,7 +68,7 @@ def process_card():
         front_img = img.crop((sLeftX, sy, sLeftX + sw, sy + sh))
         back_img = img.crop((sRightX, sy, sRightX + sw, sy + sh))
 
-        # 🟢 Photo Editing (Brightness, Contrast, Saturation, Grayscale) fakt photo var apply hovil
+        # Database madhil photo coordinates use karun fkt photo var editing apply karne
         photo_x = int(sw * float(t['photo_x_pct']))
         photo_y = int(sh * float(t['photo_y_pct']))
         photo_w = int(sw * float(t['photo_w_pct']))
@@ -138,6 +139,17 @@ def process_card():
         preview_out = io.BytesIO()
         f_resized.convert('RGB').save(preview_out, format='JPEG', quality=80)
         preview_base64 = base64.b64encode(preview_out.getvalue()).decode('utf-8')
+
+        # 🟢 Supabase madhe Service Log automatic entry save karne
+        if supabase and user_id:
+            try:
+                supabase.table('service_logs').insert({
+                    'user_id': user_id,
+                    'service_category': f"{card_name} Print",
+                    'service_details': f"{size} Size + Smart Crop"
+                }).execute()
+            except Exception as log_err:
+                print(f"Log Error: {log_err}")
 
         return jsonify({
             "success": True,
