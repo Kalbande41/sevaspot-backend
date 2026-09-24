@@ -20,6 +20,9 @@ def process_card():
 
     try:
         user_id = request.form.get('userId')
+        if not user_id or str(user_id).strip() in ['null', 'undefined', '']:
+            user_id = None
+
         password = request.form.get('password', '')
         size = request.form.get('size', '4x6')
         
@@ -82,27 +85,23 @@ def process_card():
             w, h = im.size
             im = im.convert("RGBA")
             
-            # अचूक राऊंडेड मास्क बनवणे
             mask = Image.new('L', (w, h), 0)
             draw_mask = ImageDraw.Draw(mask)
             draw_mask.rounded_rectangle([0, 0, w-1, h-1], radius=rad, fill=255)
             im.putalpha(mask)
             
-            # पांढऱ्या बॅकग्राउंडवर इमेज पेस्ट करणे (कोपरे काळे किंवा पारदर्शक राहू नयेत म्हणून)
             bg = Image.new("RGB", (w, h), (255, 255, 255))
             bg.paste(im, (0, 0), im)
             
-            # कार्डच्या अगदी कडेला (Inside Edge) ३ पिक्सेलची नॅचरल काळी बॉर्डर ड्रॉ करणे
             draw_border = ImageDraw.Draw(bg)
             draw_border.rounded_rectangle([1, 1, w-2, h-2], radius=rad, outline="black", width=3)
             
             return bg
 
-        # कॉर्नर्स रेडिअस ३२ ठेवला आहे, जो आधार/पॅन कार्डसाठी एकदम परफेक्ट बसतो
         front_img = add_rounded_corners_and_border(front_img, 32)
         back_img = add_rounded_corners_and_border(back_img, 32)
 
-        # 🟢 कार्डची रुंदी थोडी कमी केली (९८० वरून ९४० केली)
+        # 🟢 कार्डची रुंदी ९४०
         draw_w = 940
         draw_h = int(draw_w / CARD_ASPECT_RATIO) 
         
@@ -127,6 +126,7 @@ def process_card():
         canvas.save(pdf_out, format='PDF', resolution=300.0)
         pdf_base64 = base64.b64encode(pdf_out.getvalue()).decode('utf-8')
 
+        # 🟢 Service Log नोंद (७ अचूक रकाने)
         if supabase and user_id:
             try:
                 prof_res = supabase.table('user_profiles').select('full_name, shop_name, mobile_number, address').eq('id', user_id).execute()
@@ -136,14 +136,19 @@ def process_card():
                 mob_val = ""
                 addr_val = ""
                 
-                if prof_res.data:
+                if prof_res.data and len(prof_res.data) > 0:
                     p = prof_res.data[0]
                     shop_val = p.get('shop_name') or ""
                     user_val = p.get('full_name') or ""
                     mob_val = p.get('mobile_number') or ""
                     addr_val = p.get('address') or ""
                 
-                category_name = "आधार कार्ड प्रिंट" if card_name == "Aadhaar" else f"{card_name} प्रिंट"
+                if card_name == "Aadhaar":
+                    category_name = "आधार कार्ड प्रिंट"
+                elif card_name == "Voter":
+                    category_name = "मतदान कार्ड प्रिंट"
+                else:
+                    category_name = f"{card_name} कार्ड प्रिंट"
                 
                 now = datetime.now()
                 date_str = now.strftime("%d/%m/%Y")
