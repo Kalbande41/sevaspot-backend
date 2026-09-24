@@ -1,10 +1,10 @@
 from flask import Blueprint, request, jsonify
-import fitz  # PyMuPDF
+import pymupdf as fitz  # 🟢 Modern PyMuPDF Import (No Deprecation Warning)
 from PIL import Image, ImageEnhance, ImageDraw
 import io
 import base64
 import os
-import gc  # 🟢 Garbage Collector for Zero Memory Crash
+import gc
 from datetime import datetime
 from supabase import create_client, Client
 
@@ -54,15 +54,14 @@ def process_card():
 
         page = doc[0]
 
-        # 🟢 CRITICAL FIX: zoom = 4.0 मुळे मोठी PDF असताना सर्व्हर 512MB RAM ओव्हरफ्लो होऊन क्रॅश होत होता!
-        # zoom = 2.0833 (150 DPI) किंवा 2.5 हे 300 DPI कार्डसाठी 100% HD क्लॅरिटी देते आणि मेमरी फक्त 25 MB वापरते.
+        # 🟢 zoom = 2.5: 300 DPI एचडी प्रिंटसाठी अत्यंत हलके (Zero Crash on Large PDF)
         zoom = 2.5
         mat = fitz.Matrix(zoom, zoom)
         pix = page.get_pixmap(matrix=mat, alpha=False)
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
         width, height = img.size
 
-        # Free PyMuPDF pixmap instantly from RAM
+        # Free pixmap
         pix = None
 
         CARD_ASPECT_RATIO = float(t['aspect_ratio'])
@@ -75,7 +74,6 @@ def process_card():
         front_img = img.crop((sLeftX, sy, sLeftX + sw, sy + sh))
         back_img = img.crop((sRightX, sy, sRightX + sw, sy + sh))
 
-        # Free base image from RAM
         img = None
 
         photo_x = int(sw * float(t['photo_x_pct']))
@@ -136,7 +134,6 @@ def process_card():
         canvas.save(pdf_out, format='PDF', resolution=300.0)
         pdf_base64 = base64.b64encode(pdf_out.getvalue()).decode('utf-8')
 
-        # Cleanup memory
         canvas = None
         f_resized = None
         b_resized = None
