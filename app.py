@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 # 🟢 Smart Crop Service (Blueprint)
 from smart_crop_service import smart_crop_bp
+from voter_crop_service import voter_crop_bp
 
 app = Flask(__name__)
 
@@ -30,6 +31,7 @@ else:
 
 # 🟢 Register Blueprint for ID Cards
 app.register_blueprint(smart_crop_bp, url_prefix='/api/services')
+app.register_blueprint(voter_crop_bp, url_prefix='/api/services')
 
 
 # ========================================================
