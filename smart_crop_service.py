@@ -22,8 +22,10 @@ def process_card():
         password = request.form.get('password', '')
         size = request.form.get('size', '4x6')
         
-        # मुख्य फॉर्ममधून फक्त ब्राइटनेसची व्हॅल्यू येईल
-        brightness = int(request.form.get('brightness', 110))
+        # 🟢 थेट डाऊनलोडसाठी ऑटो ब्राइटनेस आणि शार्पनेस (११०%)
+        brightness = 110 
+        sharpness = 1.5 
+        
         card_name = request.form.get('cardName', 'Aadhaar') 
 
         file = request.files.get('pdfFile')
@@ -63,19 +65,21 @@ def process_card():
         front_img = img.crop((sLeftX, sy, sLeftX + sw, sy + sh))
         back_img = img.crop((sRightX, sy, sRightX + sw, sy + sh))
 
-        if brightness != 100:
-            photo_x = int(sw * float(t['photo_x_pct']))
-            photo_y = int(sh * float(t['photo_y_pct']))
-            photo_w = int(sw * float(t['photo_w_pct']))
-            photo_h = int(sh * float(t['photo_h_pct']))
+        # फोटो क्रॉप करून ऑटो क्लिअर करणे
+        photo_x = int(sw * float(t['photo_x_pct']))
+        photo_y = int(sh * float(t['photo_y_pct']))
+        photo_w = int(sw * float(t['photo_w_pct']))
+        photo_h = int(sh * float(t['photo_h_pct']))
+        
+        photo_img = front_img.crop((photo_x, photo_y, photo_x + photo_w, photo_y + photo_h))
+        
+        # ऑटोमॅटिक ब्राइटनेस आणि शार्पनेस लागू करणे
+        photo_img = ImageEnhance.Brightness(photo_img).enhance(brightness / 100.0)
+        photo_img = ImageEnhance.Sharpness(photo_img).enhance(sharpness)
             
-            photo_img = front_img.crop((photo_x, photo_y, photo_x + photo_w, photo_y + photo_h))
-            photo_img = ImageEnhance.Brightness(photo_img).enhance(brightness / 100.0)
-            # थोडी शार्पनेस आपोआप ॲड केली आहे
-            photo_img = ImageEnhance.Sharpness(photo_img).enhance(1.5)
-            front_img.paste(photo_img, (photo_x, photo_y))
+        front_img.paste(photo_img, (photo_x, photo_y))
 
-        # 🟢 राऊंडेड कॉर्नर्स आणि बारीक काळी बॉर्डर (Width = 3)
+        # राऊंडेड कॉर्नर्स आणि कटिंगसाठी काळी बॉर्डर
         def add_rounded_corners_and_border(im, rad):
             im = im.convert("RGBA")
             circle = Image.new('L', (rad * 2, rad * 2), 0)
@@ -94,8 +98,7 @@ def process_card():
             bordered.paste(im, (0, 0), im)
             
             draw_border = ImageDraw.Draw(bordered)
-            # इथे बॉर्डरची जाडी कमी केली आहे
-            draw_border.rounded_rectangle([0, 0, w-1, h-1], radius=rad, outline="black", width=3)
+            draw_border.rounded_rectangle([0, 0, w-1, h-1], radius=rad, outline="black", width=6)
             return bordered.convert("RGB")
 
         front_img = add_rounded_corners_and_border(front_img, 32)
@@ -124,16 +127,33 @@ def process_card():
         canvas.save(pdf_out, format='PDF', resolution=300.0)
         pdf_base64 = base64.b64encode(pdf_out.getvalue()).decode('utf-8')
 
-        # 🟢 Supabase मध्ये थेट नोंद (ऑटोमॅटिक)
+        # 🟢 Supabase मध्ये ॲडव्हान्स फॉरमॅटमध्ये लॉग एंट्री सेव्ह करणे
         if supabase and user_id:
             try:
+                prof_res = supabase.table('user_profiles').select('full_name, shop_name, mobile_number, address').eq('id', user_id).execute()
+                
+                shop_str = "No Shop"
+                name_str = "Unknown"
+                mob_str = "No Mobile"
+                addr_str = "No Address"
+                
+                if prof_res.data:
+                    p = prof_res.data[0]
+                    shop_str = p.get('shop_name') or "No Shop"
+                    name_str = p.get('full_name') or "Unknown"
+                    mob_str = p.get('mobile_number') or "No Mobile"
+                    addr_str = p.get('address') or "No Address"
+
+                # फॉरमॅट: Shop Name / User-Mobile-Address-Service Details
+                final_details = f"{shop_str} / {name_str} - {mob_str} - {addr_str} - {size} Size Auto HD Print"
+
                 supabase.table('service_logs').insert({
                     'user_id': user_id,
                     'service_category': f"{card_name} Print",
-                    'service_details': f"{size} Size + Direct Smart Crop"
+                    'service_details': final_details
                 }).execute()
             except Exception as log_err:
-                pass
+                print(f"Log Error: {log_err}")
 
         return jsonify({
             "success": True,
