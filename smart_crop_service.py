@@ -95,7 +95,8 @@ def process_card():
             bordered.paste(im, (0, 0), im)
             
             draw_border = ImageDraw.Draw(bordered)
-            draw_border.rounded_rectangle([0, 0, w-1, h-1], radius=rad, outline="black", width=6)
+            # 🟢 Update: Border width 6 varun 3 keli ani aatlya bajula 2px shift keli 
+            draw_border.rounded_rectangle([2, 2, w-3, h-3], radius=rad, outline="black", width=3)
             return bordered.convert("RGB")
 
         front_img = add_rounded_corners_and_border(front_img, 32)
@@ -125,8 +126,6 @@ def process_card():
         canvas.save(pdf_out, format='PDF', resolution=300.0)
         pdf_base64 = base64.b64encode(pdf_out.getvalue()).decode('utf-8')
 
-        # 🟢 Supabase Service Logs मध्ये अचूक ७ कॉलम्स सेव्ह करणे:
-        # Date | Shop Name | User name | Mobile | Address | Service Category | Service Details
         if supabase and user_id:
             try:
                 prof_res = supabase.table('user_profiles').select('full_name, shop_name, mobile_number, address').eq('id', user_id).execute()
@@ -149,7 +148,6 @@ def process_card():
                 date_str = now.strftime("%d/%m/%Y")
                 current_time = now.isoformat()
 
-                # ⚡ अचूक रकाने - कोणताही डिफॉल्ट डेटा नाही
                 supabase.table('service_logs').insert({
                     'user_id': user_id,
                     'log_date': date_str,
