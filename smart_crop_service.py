@@ -22,25 +22,20 @@ def process_card():
         password = request.form.get('password', '')
         size = request.form.get('size', '4x6')
         
-        # 4 Editing parameters (Client-side live preview sathi values ghene)
-        brightness = int(request.form.get('brightness', 100))
-        contrast = int(request.form.get('contrast', 100))
-        saturation = int(request.form.get('saturation', 100))
-        grayscale = int(request.form.get('grayscale', 0))
-        
+        # मुख्य फॉर्ममधून फक्त ब्राइटनेसची व्हॅल्यू येईल
+        brightness = int(request.form.get('brightness', 110))
         card_name = request.form.get('cardName', 'Aadhaar') 
 
         file = request.files.get('pdfFile')
         if not file:
-            return jsonify({"error": "PDF phail sapadli nahi."}), 400
+            return jsonify({"error": "PDF फाईल सापडली नाही."}), 400
 
         if not supabase:
-            return jsonify({"error": "Database connection nahi."}), 500
+            return jsonify({"error": "डेटाबेस कनेक्शन नाही."}), 500
 
-        # Database madhun card che template (coordinates) ghene
         template_res = supabase.table('card_templates').select('*').eq('card_name', card_name).execute()
         if not template_res.data:
-            return jsonify({"error": f"{card_name} che template database madhe sapadle nahi!"}), 404
+            return jsonify({"error": f"{card_name} चे टेम्पलेट डेटाबेसमध्ये सापडले नाही!"}), 404
         
         t = template_res.data[0]
 
@@ -49,7 +44,7 @@ def process_card():
         
         if doc.is_encrypted:
             if not doc.authenticate(password):
-                return jsonify({"error": f"Chukicha password! {card_name} cha achuk password taka."}), 400
+                return jsonify({"error": f"चुकीचा पासवर्ड! {card_name} चा अचूक पासवर्ड टाका."}), 400
 
         page = doc[0]
         zoom = 4.0 
@@ -68,27 +63,19 @@ def process_card():
         front_img = img.crop((sLeftX, sy, sLeftX + sw, sy + sh))
         back_img = img.crop((sRightX, sy, sRightX + sw, sy + sh))
 
-        # Database madhil photo coordinates use karun fkt photo var editing apply karne
-        photo_x = int(sw * float(t['photo_x_pct']))
-        photo_y = int(sh * float(t['photo_y_pct']))
-        photo_w = int(sw * float(t['photo_w_pct']))
-        photo_h = int(sh * float(t['photo_h_pct']))
-        
-        photo_img = front_img.crop((photo_x, photo_y, photo_x + photo_w, photo_y + photo_h))
-        
         if brightness != 100:
-            photo_img = ImageEnhance.Brightness(photo_img).enhance(brightness / 100.0)
-        if contrast != 100:
-            photo_img = ImageEnhance.Contrast(photo_img).enhance(contrast / 100.0)
-        if saturation != 100:
-            photo_img = ImageEnhance.Color(photo_img).enhance(saturation / 100.0)
-        if grayscale > 0:
-            gray_img = photo_img.convert("L").convert("RGB")
-            photo_img = Image.blend(photo_img, gray_img, grayscale / 100.0)
+            photo_x = int(sw * float(t['photo_x_pct']))
+            photo_y = int(sh * float(t['photo_y_pct']))
+            photo_w = int(sw * float(t['photo_w_pct']))
+            photo_h = int(sh * float(t['photo_h_pct']))
             
-        front_img.paste(photo_img, (photo_x, photo_y))
+            photo_img = front_img.crop((photo_x, photo_y, photo_x + photo_w, photo_y + photo_h))
+            photo_img = ImageEnhance.Brightness(photo_img).enhance(brightness / 100.0)
+            # थोडी शार्पनेस आपोआप ॲड केली आहे
+            photo_img = ImageEnhance.Sharpness(photo_img).enhance(1.5)
+            front_img.paste(photo_img, (photo_x, photo_y))
 
-        # Rounded Corners and Black Border for cutting
+        # 🟢 राऊंडेड कॉर्नर्स आणि बारीक काळी बॉर्डर (Width = 3)
         def add_rounded_corners_and_border(im, rad):
             im = im.convert("RGBA")
             circle = Image.new('L', (rad * 2, rad * 2), 0)
@@ -107,7 +94,8 @@ def process_card():
             bordered.paste(im, (0, 0), im)
             
             draw_border = ImageDraw.Draw(bordered)
-            draw_border.rounded_rectangle([0, 0, w-1, h-1], radius=rad, outline="black", width=6)
+            # इथे बॉर्डरची जाडी कमी केली आहे
+            draw_border.rounded_rectangle([0, 0, w-1, h-1], radius=rad, outline="black", width=3)
             return bordered.convert("RGB")
 
         front_img = add_rounded_corners_and_border(front_img, 32)
@@ -136,25 +124,20 @@ def process_card():
         canvas.save(pdf_out, format='PDF', resolution=300.0)
         pdf_base64 = base64.b64encode(pdf_out.getvalue()).decode('utf-8')
 
-        preview_out = io.BytesIO()
-        f_resized.convert('RGB').save(preview_out, format='JPEG', quality=80)
-        preview_base64 = base64.b64encode(preview_out.getvalue()).decode('utf-8')
-
-        # 🟢 Supabase madhe Service Log automatic entry save karne
+        # 🟢 Supabase मध्ये थेट नोंद (ऑटोमॅटिक)
         if supabase and user_id:
             try:
                 supabase.table('service_logs').insert({
                     'user_id': user_id,
                     'service_category': f"{card_name} Print",
-                    'service_details': f"{size} Size + Smart Crop"
+                    'service_details': f"{size} Size + Direct Smart Crop"
                 }).execute()
             except Exception as log_err:
-                print(f"Log Error: {log_err}")
+                pass
 
         return jsonify({
             "success": True,
-            "pdf_base64": pdf_base64,
-            "preview_base64": preview_base64
+            "pdf_base64": pdf_base64
         })
 
     except Exception as e:
