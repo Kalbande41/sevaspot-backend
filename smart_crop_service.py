@@ -77,33 +77,34 @@ def process_card():
             
         front_img.paste(photo_img, (photo_x, photo_y))
 
+        # 🟢 नॅचरल राऊंडेड कॉर्नर्स आणि अचूक बॉर्डर
         def add_rounded_corners_and_border(im, rad):
-            im = im.convert("RGBA")
-            circle = Image.new('L', (rad * 2, rad * 2), 0)
-            draw = ImageDraw.Draw(circle)
-            draw.ellipse((0, 0, rad * 2 - 1, rad * 2 - 1), fill=255)
-            
-            alpha = Image.new('L', im.size, 255)
             w, h = im.size
-            alpha.paste(circle.crop((0, 0, rad, rad)), (0, 0))
-            alpha.paste(circle.crop((0, rad, rad, rad * 2)), (0, h - rad))
-            alpha.paste(circle.crop((rad, 0, rad * 2, rad)), (w - rad, 0))
-            alpha.paste(circle.crop((rad, rad, rad * 2, rad * 2)), (w - rad, h - rad))
-            im.putalpha(alpha)
+            im = im.convert("RGBA")
             
-            bordered = Image.new("RGBA", im.size, (255, 255, 255, 0))
-            bordered.paste(im, (0, 0), im)
+            # अचूक राऊंडेड मास्क बनवणे
+            mask = Image.new('L', (w, h), 0)
+            draw_mask = ImageDraw.Draw(mask)
+            draw_mask.rounded_rectangle([0, 0, w-1, h-1], radius=rad, fill=255)
+            im.putalpha(mask)
             
-            draw_border = ImageDraw.Draw(bordered)
-            # 🟢 Update: Border width 6 varun 3 keli ani aatlya bajula 2px shift keli 
-            draw_border.rounded_rectangle([2, 2, w-3, h-3], radius=rad, outline="black", width=3)
-            return bordered.convert("RGB")
+            # पांढऱ्या बॅकग्राउंडवर इमेज पेस्ट करणे (कोपरे काळे किंवा पारदर्शक राहू नयेत म्हणून)
+            bg = Image.new("RGB", (w, h), (255, 255, 255))
+            bg.paste(im, (0, 0), im)
+            
+            # कार्डच्या अगदी कडेला (Inside Edge) ३ पिक्सेलची नॅचरल काळी बॉर्डर ड्रॉ करणे
+            draw_border = ImageDraw.Draw(bg)
+            draw_border.rounded_rectangle([1, 1, w-2, h-2], radius=rad, outline="black", width=3)
+            
+            return bg
 
+        # कॉर्नर्स रेडिअस ३२ ठेवला आहे, जो आधार/पॅन कार्डसाठी एकदम परफेक्ट बसतो
         front_img = add_rounded_corners_and_border(front_img, 32)
         back_img = add_rounded_corners_and_border(back_img, 32)
 
-        draw_w = 980
-        draw_h = int(1040 / CARD_ASPECT_RATIO) 
+        # 🟢 कार्डची रुंदी थोडी कमी केली (९८० वरून ९४० केली)
+        draw_w = 940
+        draw_h = int(draw_w / CARD_ASPECT_RATIO) 
         
         f_resized = front_img.resize((draw_w, draw_h), Image.Resampling.LANCZOS)
         b_resized = back_img.resize((draw_w, draw_h), Image.Resampling.LANCZOS)
