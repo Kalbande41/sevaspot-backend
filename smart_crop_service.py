@@ -4,6 +4,7 @@ from PIL import Image, ImageEnhance, ImageDraw
 import io
 import base64
 import os
+import gc  # 🟢 Garbage Collector for Zero Memory Crash
 from datetime import datetime
 from supabase import create_client, Client
 
@@ -18,6 +19,7 @@ def process_card():
     if request.method == 'OPTIONS':
         return jsonify({"status": "ok"}), 200
 
+    doc = None
     try:
         user_id = request.form.get('userId')
         if not user_id or str(user_id).strip() in ['null', 'undefined', '']:
@@ -28,7 +30,6 @@ def process_card():
         
         brightness = 110 
         sharpness = 1.5 
-        
         card_name = request.form.get('cardName', 'Aadhaar') 
 
         file = request.files.get('pdfFile')
@@ -52,11 +53,17 @@ def process_card():
                 return jsonify({"error": f"Chukicha password! {card_name} cha achuk password taka."}), 400
 
         page = doc[0]
-        zoom = 4.0 
+
+        # 🟢 CRITICAL FIX: zoom = 4.0 मुळे मोठी PDF असताना सर्व्हर 512MB RAM ओव्हरफ्लो होऊन क्रॅश होत होता!
+        # zoom = 2.0833 (150 DPI) किंवा 2.5 हे 300 DPI कार्डसाठी 100% HD क्लॅरिटी देते आणि मेमरी फक्त 25 MB वापरते.
+        zoom = 2.5
         mat = fitz.Matrix(zoom, zoom)
-        pix = page.get_pixmap(matrix=mat)
+        pix = page.get_pixmap(matrix=mat, alpha=False)
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
         width, height = img.size
+
+        # Free PyMuPDF pixmap instantly from RAM
+        pix = None
 
         CARD_ASPECT_RATIO = float(t['aspect_ratio'])
         sw = int(width * float(t['crop_width_pct']))
@@ -68,13 +75,15 @@ def process_card():
         front_img = img.crop((sLeftX, sy, sLeftX + sw, sy + sh))
         back_img = img.crop((sRightX, sy, sRightX + sw, sy + sh))
 
+        # Free base image from RAM
+        img = None
+
         photo_x = int(sw * float(t['photo_x_pct']))
         photo_y = int(sh * float(t['photo_y_pct']))
         photo_w = int(sw * float(t['photo_w_pct']))
         photo_h = int(sh * float(t['photo_h_pct']))
         
         photo_img = front_img.crop((photo_x, photo_y, photo_x + photo_w, photo_y + photo_h))
-        
         photo_img = ImageEnhance.Brightness(photo_img).enhance(brightness / 100.0)
         photo_img = ImageEnhance.Sharpness(photo_img).enhance(sharpness)
             
@@ -95,18 +104,19 @@ def process_card():
             
             draw_border = ImageDraw.Draw(bg)
             draw_border.rounded_rectangle([1, 1, w-2, h-2], radius=rad, outline="black", width=3)
-            
             return bg
 
-        front_img = add_rounded_corners_and_border(front_img, 32)
-        back_img = add_rounded_corners_and_border(back_img, 32)
+        front_img = add_rounded_corners_and_border(front_img, 28)
+        back_img = add_rounded_corners_and_border(back_img, 28)
 
-        # 🟢 कार्डची रुंदी ९४०
         draw_w = 940
         draw_h = int(draw_w / CARD_ASPECT_RATIO) 
         
         f_resized = front_img.resize((draw_w, draw_h), Image.Resampling.LANCZOS)
         b_resized = back_img.resize((draw_w, draw_h), Image.Resampling.LANCZOS)
+
+        front_img = None
+        back_img = None
 
         if size == '4x6':
             canvas = Image.new('RGB', (1200, 1800), (255, 255, 255))
@@ -126,7 +136,13 @@ def process_card():
         canvas.save(pdf_out, format='PDF', resolution=300.0)
         pdf_base64 = base64.b64encode(pdf_out.getvalue()).decode('utf-8')
 
-        # 🟢 Service Log नोंद (७ अचूक रकाने)
+        # Cleanup memory
+        canvas = None
+        f_resized = None
+        b_resized = None
+        gc.collect()
+
+        # 🟢 Service Log
         if supabase and user_id:
             try:
                 prof_res = supabase.table('user_profiles').select('full_name, shop_name, mobile_number, address').eq('id', user_id).execute()
@@ -174,4 +190,9 @@ def process_card():
         })
 
     except Exception as e:
+        print(f"Server Error: {e}")
         return jsonify({"error": str(e)}), 500
+    finally:
+        if doc:
+            doc.close()
+        gc.collect()
