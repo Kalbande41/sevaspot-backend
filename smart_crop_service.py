@@ -4,7 +4,7 @@ from PIL import Image, ImageEnhance, ImageDraw
 import io
 import base64
 import os
-from datetime import datetime  # 🟢 नवीन इम्पोर्ट
+from datetime import datetime
 from supabase import create_client, Client
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -125,37 +125,44 @@ def process_card():
         canvas.save(pdf_out, format='PDF', resolution=300.0)
         pdf_base64 = base64.b64encode(pdf_out.getvalue()).decode('utf-8')
 
-        # 🟢 Supabase Logs मॅन्युअल तारखेसह सेव्ह करणे
+        # 🟢 Supabase Service Logs मध्ये अचूक ७ कॉलम्स सेव्ह करणे:
+        # Date | Shop Name | User name | Mobile | Address | Service Category | Service Details
         if supabase and user_id:
             try:
                 prof_res = supabase.table('user_profiles').select('full_name, shop_name, mobile_number, address').eq('id', user_id).execute()
                 
-                shop_str = ""
-                mob_str = ""
-                addr_str = ""
+                shop_val = ""
+                user_val = ""
+                mob_val = ""
+                addr_val = ""
                 
                 if prof_res.data:
                     p = prof_res.data[0]
-                    shop_str = p.get('shop_name') or p.get('full_name') or "Unknown"
-                    mob_str = p.get('mobile_number') or ""
-                    addr_str = p.get('address') or ""
+                    shop_val = p.get('shop_name') or ""
+                    user_val = p.get('full_name') or ""
+                    mob_val = p.get('mobile_number') or ""
+                    addr_val = p.get('address') or ""
                 
-                category_name = "आधार कार्ड" if card_name == "Aadhaar" else f"{card_name} कार्ड"
+                category_name = "आधार कार्ड प्रिंट" if card_name == "Aadhaar" else f"{card_name} प्रिंट"
                 
-                # सध्याची वेळ जनरेट करणे (किंवा भविष्यात तुम्ही फ्रंटएंडवरून आलेली कस्टम वेळही वापरू शकता)
-                current_time = datetime.now().isoformat()
+                now = datetime.now()
+                date_str = now.strftime("%d/%m/%Y")
+                current_time = now.isoformat()
 
+                # ⚡ अचूक रकाने - कोणताही डिफॉल्ट डेटा नाही
                 supabase.table('service_logs').insert({
                     'user_id': user_id,
-                    'shop_name_user': shop_str,
-                    'mobile': mob_str,
-                    'address': addr_str,
+                    'log_date': date_str,
+                    'shop_name': shop_val,
+                    'user_name': user_val,
+                    'mobile': mob_val,
+                    'address': addr_val,
                     'service_category': category_name,
                     'service_details': f"{size} Size + Smart HD Photo Edit",
-                    'created_at': current_time  # 🟢 वेळ मॅन्युअली पाठवली
+                    'created_at': current_time
                 }).execute()
             except Exception as log_err:
-                print(f"Log Error: {log_err}")
+                print(f"Service Log Error: {log_err}")
 
         return jsonify({
             "success": True,
