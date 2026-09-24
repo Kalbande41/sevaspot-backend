@@ -12,7 +12,10 @@ from voter_crop_service import voter_crop_bp
 
 app = Flask(__name__)
 
-# 🟢 BULLETPROOF CORS CONFIGURATION
+# 🟢 1. फाईल साईझ मर्यादा वाढवली (32 MB पर्यंतच्या सर्व मोठ्या PDF ना पूर्ण परवानगी)
+app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB Upload Limit
+
+# 🟢 2. BULLETPROOF CORS CONFIGURATION
 CORS(app, resources={r"/*": {
     "origins": "*",
     "methods": ["GET", "POST", "OPTIONS"],
@@ -37,6 +40,13 @@ def add_cors_headers(response):
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, Accept"
     return response
+
+# मोठ्या फाईलसाठी स्वच्छ एरर हँडलर
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    return jsonify({
+        "error": "PDF फाईल खूप मोठी आहे (कमाल मर्यादा 32 MB आहे). कृपया फाईल कॉम्प्रेस करून पुन्हा अपलोड करा."
+    }), 413
 
 # Supabase Keys
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -69,7 +79,8 @@ def home():
         "status": "online",
         "service": "QuickIDPrint Python Backend",
         "supabase": status,
-        "message": "Backend is Running Perfectly!"
+        "max_upload_size": "32MB",
+        "message": "Backend is Running Perfectly on Render!"
     }), 200
 
 
@@ -122,6 +133,170 @@ def check_validity():
                 "error": "Tumcha plan sampla ahe. Krupaya recharge kara.", 
                 "is_active": False
             }), 403
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ========================================================
+# ३. Admin API: Plan recharge approve (From & To Date)
+# ========================================================
+@app.route('/approve-recharge', methods=['POST', 'OPTIONS'])
+def approve_recharge():
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "ok"}), 200
+
+    if not supabase:
+        return jsonify({"error": "Supabase connect nahi."}), 500
+
+    data = request.get_json(silent=True) or {}
+    request_id = data.get('requestId')
+    user_id = data.get('userId')
+    plan_days = int(data.get('planDays', 30))
+
+    if not request_id or not user_id:
+        return jsonify({"error": "requestId ani userId avashyak ahet."}), 400
+
+    try:
+        prof_res = supabase.table('user_profiles').select('expire_date, plan_status, total_renews').eq('id', user_id).execute()
+        
+        today_date = datetime.now().date()
+        start_date = today_date
+
+        if prof_res.data:
+            profile = prof_res.data[0]
+            current_exp_str = profile.get('expire_date')
+            status = profile.get('plan_status', '')
+            
+            if status and str(status).strip().lower() == 'active' and current_exp_str:
+                current_exp = datetime.strptime(current_exp_str, '%Y-%m-%d').date()
+                if current_exp >= today_date:
+                    start_date = current_exp  
+
+        new_expiry_date = start_date + timedelta(days=plan_days)
+        start_date_str = today_date.strftime('%Y-%m-%d')
+        expiry_date_str = new_expiry_date.strftime('%Y-%m-%d')
+
+        current_renews = prof_res.data[0].get('total_renews') if prof_res.data and prof_res.data[0].get('total_renews') else 0
+        
+        supabase.table('user_profiles').update({
+            'plan_status': 'Active',
+            'start_date': start_date_str,
+            'expire_date': expiry_date_str,
+            'total_renews': current_renews + 1,
+            'last_recharge_date': datetime.now().isoformat()
+        }).eq('id', user_id).execute()
+
+        supabase.table('recharge_requests').update({'status': 'Approved'}).eq('id', request_id).execute()
+
+        supabase.table('transactions').insert({
+            'user_id': user_id,
+            'action': 'Plan Renew',
+            'remark': f'{plan_days} Days Plan Activated',
+            'start_date': start_date_str,
+            'expiry_date': expiry_date_str,
+            'status': 'Success'
+        }).execute()
+
+        return jsonify({"success": True, "message": "Plan yashasviritya activate jhala!"}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ========================================================
+# ४. Direct Password Reset API
+# ========================================================
+@app.route('/reset-password', methods=['POST', 'OPTIONS'])
+def reset_password():
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "ok"}), 200
+
+    if not supabase:
+        return jsonify({"status": "error", "message": "Supabase server connect nahi."}), 500
+
+    data = request.get_json(silent=True) or request.form or {}
+    user_id = data.get('userId')
+    email = data.get('email', '').strip().lower()
+    mobile = data.get('mobile', '').strip()
+    new_password = data.get('newPassword', '').strip()
+
+    if not user_id or not email or not mobile or not new_password:
+        return jsonify({
+            "status": "error",
+            "message": "Sarva mahiti (mobile, email, navin password) avashyak ahe."
+        }), 400
+
+    if len(new_password) < 6:
+        return jsonify({
+            "status": "error",
+            "message": "Password kiman 6 aksharancha asava."
+        }), 400
+
+    try:
+        profile_res = supabase.table('user_profiles')\
+            .select('id, email, mobile_number')\
+            .eq('id', user_id)\
+            .eq('mobile_number', mobile)\
+            .eq('email', email)\
+            .execute()
+
+        if not profile_res.data or len(profile_res.data) == 0:
+            return jsonify({
+                "status": "error",
+                "message": "Suraksha tapasani ayashasvi! Mobile number va email julat nahit."
+            }), 403
+
+        supabase.auth.admin.update_user_by_id(
+            uid=user_id,
+            attributes={"password": new_password}
+        )
+
+        return jsonify({
+            "status": "success",
+            "message": "Password yashasviritya update karnyat ala ahe!"
+        }), 200
+
+    except Exception as e:
+        print(f"Password Reset Error: {e}", file=sys.stderr)
+        return jsonify({
+            "status": "error",
+            "message": f"Server truti: {str(e)}"
+        }), 500
+
+
+# ========================================================
+# ५. Service Log API
+# ========================================================
+@app.route('/log-service', methods=['POST', 'OPTIONS'])
+def log_service():
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "ok"}), 200
+
+    if not supabase:
+        return jsonify({"error": "Supabase connect nahi."}), 500
+
+    data = request.get_json(silent=True) or {}
+    user_id = data.get('userId')
+    category = data.get('serviceCategory') 
+    details = data.get('serviceDetails')   
+
+    if not user_id or not category:
+        return jsonify({"error": "userId ani serviceCategory avashyak ahet."}), 400
+
+    try:
+        now = datetime.now()
+        date_str = now.strftime("%d/%m/%Y")
+        
+        supabase.table('service_logs').insert({
+            'user_id': user_id,
+            'log_date': date_str,
+            'service_category': category,
+            'service_details': details,
+            'created_at': now.isoformat()
+        }).execute()
+
+        return jsonify({"success": True, "message": "Service log yashasviritya save jhala!"}), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
