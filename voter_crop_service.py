@@ -11,10 +11,9 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY) if SUPABASE_URL else None
 
-# 🟢 Blueprint che nav vegale thevale aahe (voter_crop_bp)
+# 🟢 Blueprint
 voter_crop_bp = Blueprint('voter_crop', __name__)
 
-# 🟢 Endpoint URL vegali keli aahe (/process-voter)
 @voter_crop_bp.route('/process-voter', methods=['POST', 'OPTIONS'])
 def process_voter():
     if request.method == 'OPTIONS':
@@ -22,25 +21,26 @@ def process_voter():
 
     try:
         user_id = request.form.get('userId')
+        if not user_id or user_id.strip() in ['null', 'undefined', '']:
+            user_id = None
+
         password = request.form.get('password', '')
         size = request.form.get('size', '4x6')
         
         brightness = 110 
         sharpness = 1.5 
-        
-        # 🟢 Default card name 'Voter' set kele aahe
         card_name = request.form.get('cardName', 'Voter') 
 
         file = request.files.get('pdfFile')
         if not file:
-            return jsonify({"error": "Voter PDF file sapadli nahi."}), 400
+            return jsonify({"error": "Voter PDF file सापडली नाही."}), 400
 
         if not supabase:
-            return jsonify({"error": "Database connection nahi."}), 500
+            return jsonify({"error": "Database connection नाही."}), 500
 
         template_res = supabase.table('card_templates').select('*').eq('card_name', card_name).execute()
         if not template_res.data:
-            return jsonify({"error": f"{card_name} che template database madhe sapadle nahi!"}), 404
+            return jsonify({"error": f"'{card_name}' चे template डेटाबेसमध्ये सापडले नाही!"}), 404
         
         t = template_res.data[0]
 
@@ -49,7 +49,7 @@ def process_voter():
         
         if doc.is_encrypted:
             if not doc.authenticate(password):
-                return jsonify({"error": "Chukicha password! Voter card cha achuk password taka."}), 400
+                return jsonify({"error": "चुकीचा पासवर्ड! Voter कार्डचा अचूक पासवर्ड टाका."}), 400
 
         page = doc[0]
         zoom = 4.0 
@@ -124,24 +124,25 @@ def process_voter():
         canvas.save(pdf_out, format='PDF', resolution=300.0)
         pdf_base64 = base64.b64encode(pdf_out.getvalue()).decode('utf-8')
 
-        if supabase and user_id:
+        # 🟢 Service Log मध्ये नोंद करणे (कोणताही डिफॉल्ट डमी डेटा न ठेवता):
+        # 7 Columns: Date - Shop Name - User name - Mobile - Address - Service Category - Service Details
+        if supabase:
             try:
-                prof_res = supabase.table('user_profiles').select('full_name, shop_name, mobile_number, address').eq('id', user_id).execute()
+                shop_val = None
+                user_val = "User"
+                mob_val = None
+                addr_val = None
+
+                if user_id:
+                    prof_res = supabase.table('user_profiles').select('full_name, shop_name, mobile_number, address').eq('id', user_id).execute()
+                    if prof_res.data and len(prof_res.data) > 0:
+                        p = prof_res.data[0]
+                        shop_val = p.get('shop_name')
+                        user_val = p.get('full_name') or user_val
+                        mob_val = p.get('mobile_number')
+                        addr_val = p.get('address')
                 
-                shop_val = "No Shop"
-                user_val = "Unknown"
-                mob_val = "No Mobile"
-                addr_val = "No Address"
-                
-                if prof_res.data:
-                    p = prof_res.data[0]
-                    shop_val = p.get('shop_name') or "No Shop"
-                    user_val = p.get('full_name') or "Unknown"
-                    mob_val = p.get('mobile_number') or "No Mobile"
-                    addr_val = p.get('address') or "No Address"
-                
-                category_name = "मतदान कार्ड प्रिंट" 
-                
+                category_name = "मतदान कार्ड प्रिंट"
                 now = datetime.now()
                 date_str = now.strftime("%d/%m/%Y")
                 current_time = now.isoformat()
@@ -154,7 +155,7 @@ def process_voter():
                     'mobile': mob_val,
                     'address': addr_val,
                     'service_category': category_name,
-                    'service_details': f"{size} Size + Smart HD Photo Edit",
+                    'service_details': f"{size} Size + Smart HD Edit",
                     'created_at': current_time
                 }).execute()
             except Exception as log_err:
@@ -166,4 +167,5 @@ def process_voter():
         })
 
     except Exception as e:
+        print(f"Process Voter Error: {e}")
         return jsonify({"error": str(e)}), 500
