@@ -4,6 +4,7 @@ from PIL import Image, ImageEnhance, ImageDraw
 import io
 import base64
 import os
+from datetime import datetime  # 🟢 नवीन इम्पोर्ट
 from supabase import create_client, Client
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -22,7 +23,6 @@ def process_card():
         password = request.form.get('password', '')
         size = request.form.get('size', '4x6')
         
-        # 🟢 थेट डाऊनलोडसाठी ऑटो ब्राइटनेस आणि शार्पनेस (११०%)
         brightness = 110 
         sharpness = 1.5 
         
@@ -30,14 +30,14 @@ def process_card():
 
         file = request.files.get('pdfFile')
         if not file:
-            return jsonify({"error": "PDF फाईल सापडली नाही."}), 400
+            return jsonify({"error": "PDF file sapadli nahi."}), 400
 
         if not supabase:
-            return jsonify({"error": "डेटाबेस कनेक्शन नाही."}), 500
+            return jsonify({"error": "Database connection nahi."}), 500
 
         template_res = supabase.table('card_templates').select('*').eq('card_name', card_name).execute()
         if not template_res.data:
-            return jsonify({"error": f"{card_name} चे टेम्पलेट डेटाबेसमध्ये सापडले नाही!"}), 404
+            return jsonify({"error": f"{card_name} che template database madhe sapadle nahi!"}), 404
         
         t = template_res.data[0]
 
@@ -46,7 +46,7 @@ def process_card():
         
         if doc.is_encrypted:
             if not doc.authenticate(password):
-                return jsonify({"error": f"चुकीचा पासवर्ड! {card_name} चा अचूक पासवर्ड टाका."}), 400
+                return jsonify({"error": f"Chukicha password! {card_name} cha achuk password taka."}), 400
 
         page = doc[0]
         zoom = 4.0 
@@ -65,7 +65,6 @@ def process_card():
         front_img = img.crop((sLeftX, sy, sLeftX + sw, sy + sh))
         back_img = img.crop((sRightX, sy, sRightX + sw, sy + sh))
 
-        # फोटो क्रॉप करून ऑटो क्लिअर करणे
         photo_x = int(sw * float(t['photo_x_pct']))
         photo_y = int(sh * float(t['photo_y_pct']))
         photo_w = int(sw * float(t['photo_w_pct']))
@@ -73,13 +72,11 @@ def process_card():
         
         photo_img = front_img.crop((photo_x, photo_y, photo_x + photo_w, photo_y + photo_h))
         
-        # ऑटोमॅटिक ब्राइटनेस आणि शार्पनेस लागू करणे
         photo_img = ImageEnhance.Brightness(photo_img).enhance(brightness / 100.0)
         photo_img = ImageEnhance.Sharpness(photo_img).enhance(sharpness)
             
         front_img.paste(photo_img, (photo_x, photo_y))
 
-        # राऊंडेड कॉर्नर्स आणि कटिंगसाठी काळी बॉर्डर
         def add_rounded_corners_and_border(im, rad):
             im = im.convert("RGBA")
             circle = Image.new('L', (rad * 2, rad * 2), 0)
@@ -104,8 +101,9 @@ def process_card():
         front_img = add_rounded_corners_and_border(front_img, 32)
         back_img = add_rounded_corners_and_border(back_img, 32)
 
-        draw_w = 1040
-        draw_h = int(draw_w / CARD_ASPECT_RATIO)
+        draw_w = 980
+        draw_h = int(1040 / CARD_ASPECT_RATIO) 
+        
         f_resized = front_img.resize((draw_w, draw_h), Image.Resampling.LANCZOS)
         b_resized = back_img.resize((draw_w, draw_h), Image.Resampling.LANCZOS)
 
@@ -127,30 +125,34 @@ def process_card():
         canvas.save(pdf_out, format='PDF', resolution=300.0)
         pdf_base64 = base64.b64encode(pdf_out.getvalue()).decode('utf-8')
 
-        # 🟢 Supabase मध्ये ॲडव्हान्स फॉरमॅटमध्ये लॉग एंट्री सेव्ह करणे
+        # 🟢 Supabase Logs मॅन्युअल तारखेसह सेव्ह करणे
         if supabase and user_id:
             try:
                 prof_res = supabase.table('user_profiles').select('full_name, shop_name, mobile_number, address').eq('id', user_id).execute()
                 
-                shop_str = "No Shop"
-                name_str = "Unknown"
-                mob_str = "No Mobile"
-                addr_str = "No Address"
+                shop_str = ""
+                mob_str = ""
+                addr_str = ""
                 
                 if prof_res.data:
                     p = prof_res.data[0]
-                    shop_str = p.get('shop_name') or "No Shop"
-                    name_str = p.get('full_name') or "Unknown"
-                    mob_str = p.get('mobile_number') or "No Mobile"
-                    addr_str = p.get('address') or "No Address"
-
-                # फॉरमॅट: Shop Name / User-Mobile-Address-Service Details
-                final_details = f"{shop_str} / {name_str} - {mob_str} - {addr_str} - {size} Size Auto HD Print"
+                    shop_str = p.get('shop_name') or p.get('full_name') or "Unknown"
+                    mob_str = p.get('mobile_number') or ""
+                    addr_str = p.get('address') or ""
+                
+                category_name = "आधार कार्ड" if card_name == "Aadhaar" else f"{card_name} कार्ड"
+                
+                # सध्याची वेळ जनरेट करणे (किंवा भविष्यात तुम्ही फ्रंटएंडवरून आलेली कस्टम वेळही वापरू शकता)
+                current_time = datetime.now().isoformat()
 
                 supabase.table('service_logs').insert({
                     'user_id': user_id,
-                    'service_category': f"{card_name} Print",
-                    'service_details': final_details
+                    'shop_name_user': shop_str,
+                    'mobile': mob_str,
+                    'address': addr_str,
+                    'service_category': category_name,
+                    'service_details': f"{size} Size + Smart HD Photo Edit",
+                    'created_at': current_time  # 🟢 वेळ मॅन्युअली पाठवली
                 }).execute()
             except Exception as log_err:
                 print(f"Log Error: {log_err}")
